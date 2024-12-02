@@ -7,13 +7,15 @@
     }
 
     class mpvVideoPlayer {
-        constructor({ events, loading, appRouter, globalize, appHost, appSettings, confirm }) {
+        constructor({ events, loading, appRouter, globalize, appHost, appSettings, confirm, dashboard }) {
             this.events = events;
             this.loading = loading;
             this.appRouter = appRouter;
             this.globalize = globalize;
             this.appHost = appHost;
             this.appSettings = appSettings;
+
+            this.setTransparency = dashboard.default.setBackdropTransparency.bind(dashboard);
 
             /**
              * @type {string}
@@ -34,7 +36,7 @@
              * @type {boolean}
              */
             this.isFetching = false;
-    
+
             /**
              * @type {HTMLDivElement | null | undefined}
              */
@@ -103,7 +105,7 @@
             /**
              * @type {float}
              */
-            this._playRate = 1;
+            this._playRate;
             /**
              * @type {boolean}
              */
@@ -150,13 +152,12 @@
                     const volume = this.getSavedVolume() * 100;
                     this.setVolume(volume, false);
 
-                    this.setPlaybackRate(1);
-                    this.setMute(false, false);
+                    this.setPlaybackRate(this.getPlaybackRate());
 
                     if (this._currentPlayOptions.fullscreen) {
                         this.appRouter.showVideoOsd().then(this.onNavigatedToOsd);
                     } else {
-                        this.appRouter.setTransparency('backdrop');
+                        this.setTransparency('backdrop');
                         this._videoDialog.dlg.style.zIndex = 'unset';
                     }
 
@@ -467,7 +468,8 @@
             window.api.player.stop();
             window.api.power.setScreensaverEnabled(true);
 
-            this.appRouter.setTransparency('none');
+            this.setTransparency('none');
+
             document.body.classList.remove('hide-scroll');
 
             const dlg = this._videoDialog;
@@ -534,7 +536,7 @@
                     player.finished.connect(this.onEnded);
                     player.updateDuration.connect(this.onDuration);
                     player.error.connect(this.onError);
-                    player.paused.connect(this.onPause);    
+                    player.paused.connect(this.onPause);
                 }
 
                 if (options.fullscreen) {
@@ -581,7 +583,7 @@
      * @private
      */
     static getSupportedFeatures() {
-        return ['PlaybackRate'];
+        return ['PlaybackRate', 'SetAspectRatio'];
     }
 
     supports(feature) {
@@ -667,11 +669,21 @@
     }
 
     setPlaybackRate(value) {
-        this._playRate = value;
-        window.api.player.setPlaybackRate(value * 1000);
+        let playSpeed = +value; //this comes as a string from player force int for now
+        this._playRate = playSpeed;
+        window.api.player.setPlaybackRate(playSpeed * 1000);
     }
 
     getPlaybackRate() {
+        if(!this._playRate) //On startup grab default
+        {
+            let playRate = window.jmpInfo.settings.video.default_playback_speed;
+
+            if(!playRate) //fallback if default missing
+                playRate = 1;
+
+            this._playRate = playRate;
+        }
         return this._playRate;
     }
 
@@ -707,12 +719,15 @@
     }
 
     setVolume(val, save = true) {
-        this._volume = val;
-        if (save) {
-            this.saveVolume((val || 100) / 100);
-            this.events.trigger(this, 'volumechange');
+        val = Number(val);
+        if (!isNaN(val)) {
+            this._volume = val;
+            if (save) {
+                this.saveVolume(val / 100);
+                this.events.trigger(this, 'volumechange');
+            }
+            window.api.player.setVolume(val);
         }
-        window.api.player.setVolume(val);
     }
 
     getVolume() {
@@ -737,20 +752,6 @@
 
     isMuted() {
         return this._muted;
-    }
-
-    setAspectRatio() {
-    }
-
-    getAspectRatio() {
-        return this._currentAspectRatio || 'auto';
-    }
-
-    getSupportedAspectRatios() {
-        return [{
-            name: this.globalize.translate('Auto'),
-            id: 'auto'
-        }];
     }
 
     togglePictureInPicture() {
@@ -816,6 +817,37 @@
         return Promise.resolve({
             categories: categories
         });
+    }
+
+    getSupportedAspectRatios() {
+        const options = window.jmpInfo.settingsDescriptions.video.find(x => x.key == 'aspect').options;
+        const current = window.jmpInfo.settings.video.aspect;
+
+        const getOptionName = (option) => {
+            const canTranslate = {
+                'normal': 'Auto',
+                'zoom': 'AspectRatioCover',
+                'stretch': 'AspectRatioFill',
+            }
+            const name = option.replace('video.aspect.', '');
+            return canTranslate[name]
+                ? this.globalize.translate(canTranslate[name])
+                : name;
+        }
+
+        return options.map(x => ({
+            id: x.value,
+            name: getOptionName(x.title),
+            selected: x.value == current
+        }));
+    }
+
+    getAspectRatio() {
+        return window.jmpInfo.settings.video.aspect;
+    }
+
+    setAspectRatio(value) {
+        window.jmpInfo.settings.video.aspect = value;
     }
     }
 /* eslint-enable indent */
